@@ -1,0 +1,108 @@
+name: private-store-upgrade-proof
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr_ref:
+        description: PR branch in shuisadev/openclaw
+        required: true
+        default: fix/private-store-repair-minted-stores
+      stable_version:
+        description: Published driver version to simulate fsGroup remount on
+        required: true
+        default: "2026.11.2"
+      candidate_version:
+        description: Candidate version stamp for the built tarball
+        required: true
+        default: "2026.11.3-rc.1"
+
+permissions:
+  contents: read
+
+jobs:
+  proof:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - name: Checkout proof harness
+        uses: actions/checkout@v4
+
+      - name: Checkout reviewed PR head
+        uses: actions/checkout@v4
+        with:
+          repository: shuisadev/openclaw
+          ref: ${{ inputs.pr_ref }}
+          path: openclaw
+          fetch-depth: 1
+
+      - name: Report head identity
+        run: |
+          git -C openclaw rev-parse HEAD
+          git -C openclaw log -1 --format='%H %s'
+          ldd --version | head -1
+
+      - name: Setup Node 24.22.1
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24.22.1
+
+      - name: Enable pnpm and prepare environment
+        run: |
+          corepack enable
+          (cd openclaw && corepack install)
+          echo "npm_config_prefix=$HOME/.npm-global" >> "$GITHUB_ENV"
+          echo "$HOME/.npm-global/bin" >> "$GITHUB_PATH"
+
+      - name: Install workspace dependencies
+        working-directory: openclaw
+        run: pnpm install --frozen-lockfile
+
+      - name: Build the CLI/dist from the reviewed head
+        working-directory: openclaw
+        run: pnpm build:ci-artifacts
+
+      - name: Package the candidate artifact
+        working-directory: openclaw
+        run: |
+          node scripts/package-openclaw-for-docker.mjs --skip-build --allow-unreleased-changelog \
+            --output-dir "$RUNNER_TEMP/pkg" --output-name openclaw-candidate.tgz
+          ls -l "$RUNNER_TEMP/pkg/"
+          echo "--- candidate package.json ---"
+          tar -xzOf "$RUNNER_TEMP/pkg/openclaw-candidate.tgz" package/package.json \
+            | node -e 'let s="";process.stdin.on("data",c=>s+=c).on("end",()=>console.log(JSON.parse(s).version))'
+
+      - name: Verify candidate contains fix functions
+        run: |
+          echo "=== Check fix functions exist in candidate ==="
+          tar -xzOf "$RUNNER_TEMP/pkg/openclaw-candidate.tgz" package/dist/state/*permissions*.mjs \
+            | grep -o 'restoreMintedPrivateStoresSync\|restoreMintedGitHubStoresSync\|listMintedStoreDirectoriesSync' \
+            | sort -u
+          echo "--- done ---"
+
+      - name: Run driver-lane upgrade proof
+        working-directory: openclaw
+        env:
+          STABLE_VERSION: ${{ inputs.stable_version }}
+          CANDIDATE_VERSION: ${{ inputs.candidate_version }}
+          CANDIDATE_TARBALL: ${{ runner.temp }}/pkg/openclaw-candidate.tgz
+        run: bash "$GITHUB_WORKSPACE/scripts/proof.sh"
+
+      - name: Upload proof artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: proof-logs
+          path: |
+            /tmp/proof-summary.txt
+            /tmp/proof-stderr.log
+            /tmp/doctor-before.log
+            /tmp/doctor-after.log
+            /tmp/doctor-before-err.log
+            /tmp/doctor-after-err.log
+            /tmp/update.json
+            /tmp/update.err
+            /tmp/perms-before.txt
+            /tmp/perms-widened.txt
+            /tmp/perms-post-doctor-driver.txt
+            /tmp/perms-after.txt
+          if-no-files-found: warn
