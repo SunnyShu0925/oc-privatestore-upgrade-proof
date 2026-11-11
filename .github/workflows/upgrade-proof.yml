@@ -14,7 +14,7 @@ on:
       candidate_version:
         description: Candidate version stamp for the built tarball
         required: true
-        default: "2026.11.4-rc.1"
+        default: "2026.11.4"
 
 permissions:
   contents: read
