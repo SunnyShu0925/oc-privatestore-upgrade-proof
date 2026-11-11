@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # Driver-lane upgrade proof for PR #196394 private-store permission repair.
-# Stable driver (openclaw@2026.11.2) → candidate tarball built from PR head.
+# Stable driver (latest stable openclaw) → candidate tarball built from PR head.
 # Goal: prove minted GitHub profiles + codex-runtime (widened by fsGroup remount)
 #       stay broken after driver doctor, but repair cleanly after upgrade.
 set -uo pipefail
 
-STABLE="${STABLE_VERSION:-2026.11.2}"
-CANDIDATE_VERSION="${CANDIDATE_VERSION:-2026.11.3-rc.1}"
+STABLE="${STABLE_VERSION:-2026.11.3}"
+CANDIDATE_VERSION="${CANDIDATE_VERSION:-2026.11.4-rc.1}"
 CANDIDATE_TARBALL="${CANDIDATE_TARBALL:-openclaw-candidate.tgz}"
 
 STATE_DIR="${RUNNER_TEMP:-/tmp}/proof-state"

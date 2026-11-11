@@ -10,11 +10,11 @@ on:
       stable_version:
         description: Published driver version to simulate fsGroup remount on
         required: true
-        default: "2026.11.2"
+        default: "2026.11.3"
       candidate_version:
         description: Candidate version stamp for the built tarball
         required: true
-        default: "2026.11.3-rc.1"
+        default: "2026.11.4-rc.1"
 
 permissions:
   contents: read
@@ -97,6 +97,19 @@ jobs:
           '
           echo "dist files after patch:"
           ls -la dist/runtime-artifacts* 2>/dev/null || true
+
+      - name: Stamp the candidate version above the driver
+        working-directory: openclaw
+        env:
+          CANDIDATE_VERSION: ${{ inputs.candidate_version }}
+        run: |
+          node -e '
+          const fs = require("fs");
+          const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
+          pkg.version = process.env.CANDIDATE_VERSION;
+          fs.writeFileSync("package.json", JSON.stringify(pkg, null, 2) + "\n");
+          console.log("stamped package.json version: " + pkg.version);
+          '
 
       - name: Package the candidate artifact
         working-directory: openclaw
