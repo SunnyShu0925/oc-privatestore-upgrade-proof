@@ -404,8 +404,15 @@ chmod 600 "$CAPTURE_ONLY_ROOT/capture.marker"
 chmod 2770 "$CAPTURE_ONLY_DIR" "$CAPTURE_ONLY_ROOT"
 chmod 660 "$CAPTURE_ONLY_ROOT/capture.marker"
 note "before: $(stat -c '%a' "$CAPTURE_ONLY_ROOT") $CAPTURE_ONLY_ROOT"
+# The widened state directory is group-writable on purpose, so doctor must not
+# fall back to it as a temp root; give it a private HOME and TMPDIR of its own.
+SAFE_HOME="$RUNNER_TEMP/proof-safe-home"
+SAFE_TMP="$RUNNER_TEMP/proof-safe-tmp"
+rm -rf "$SAFE_HOME" "$SAFE_TMP"
+mkdir -p "$SAFE_HOME" "$SAFE_TMP"
+chmod 700 "$SAFE_HOME" "$SAFE_TMP"
 CAPTURE_ONLY_RC=0
-OPENCLAW_STATE_DIR="$CAPTURE_ONLY_DIR" "$POST_BIN" doctor --non-interactive --repair \
+HOME="$SAFE_HOME" TMPDIR="$SAFE_TMP" OPENCLAW_STATE_DIR="$CAPTURE_ONLY_DIR" "$POST_BIN" doctor --non-interactive --repair \
   >/tmp/doctor-capture-only.log 2>/tmp/doctor-capture-only-err.log || CAPTURE_ONLY_RC=$?
 note "capture-only doctor exit=$CAPTURE_ONLY_RC"
 CAPTURE_ONLY_MODE="$(stat -c '%a' "$CAPTURE_ONLY_ROOT")"
@@ -435,7 +442,7 @@ if [ -e "$MINTED_ONLY_DIR/client/credentials.sqlite" ] || [ -e "$MINTED_ONLY_DIR
 fi
 note "before: profile=$(stat -c '%a' "$MINTED_ONLY_PROFILE") codex=$(stat -c '%a' "$MINTED_ONLY_CODEX")"
 MINTED_ONLY_RC=0
-OPENCLAW_STATE_DIR="$MINTED_ONLY_DIR" "$POST_BIN" doctor --non-interactive --repair \
+HOME="$SAFE_HOME" TMPDIR="$SAFE_TMP" OPENCLAW_STATE_DIR="$MINTED_ONLY_DIR" "$POST_BIN" doctor --non-interactive --repair \
   >/tmp/doctor-minted-only.log 2>/tmp/doctor-minted-only-err.log || MINTED_ONLY_RC=$?
 note "minted-only doctor exit=$MINTED_ONLY_RC"
 MINTED_ONLY_OK=true
@@ -467,8 +474,8 @@ say "FINAL VERDICT"
   echo "driver: $STABLE_VERSION  candidate: $CANDIDATE_VERSION"
   echo "driver doctor: controls_repaired=$DRIVER_CONTROLS_PASS minted_still_widened=$DRIVER_MINTED_STILL_BROKEN"
   echo "candidate doctor: all_stores_repaired=$ALL_REPAIRED data_retained=$DATA_OK capture_only=$CAPTURE_ONLY_OK minted_only=$MINTED_ONLY_OK upgrade_rc=$UPDATE_RC"
-  echo "capture-only layout: no client/credentials.sqlite, no control/services.sqlite; capture root $(stat -c '%a' "$CAPTURE_ONLY_ROOT")"
-  echo "minted-only layout: no SQLite store; profile $(stat -c '%a' "$MINTED_ONLY_PROFILE"), codex-runtime $(stat -c '%a' "$MINTED_ONLY_CODEX")"
+  echo "capture-only layout: doctor_exit=$CAPTURE_ONLY_RC (no SQLite store) capture root $(stat -c '%a' "$CAPTURE_ONLY_ROOT")"
+  echo "minted-only layout: doctor_exit=$MINTED_ONLY_RC (no SQLite store) profile $(stat -c '%a' "$MINTED_ONLY_PROFILE") codex-runtime $(stat -c '%a' "$MINTED_ONLY_CODEX")"
 } >/tmp/proof-summary-compact.txt
 
 if $DRIVER_CONTROLS_PASS && $DRIVER_MINTED_STILL_BROKEN && $ALL_REPAIRED && $DATA_OK && $CAPTURE_ONLY_OK && $MINTED_ONLY_OK && [ "$UPDATE_RC" -eq 0 ]; then
