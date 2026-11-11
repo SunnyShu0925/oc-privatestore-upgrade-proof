@@ -142,4 +142,9 @@ jobs:
             /tmp/perms-widened.txt
             /tmp/perms-post-doctor-driver.txt
             /tmp/perms-after.txt
+            /tmp/doctor-capture-only.log
+            /tmp/doctor-capture-only-err.log
+            /tmp/doctor-minted-only.log
+            /tmp/doctor-minted-only-err.log
+            /tmp/proof-summary-compact.txt
           if-no-files-found: warn

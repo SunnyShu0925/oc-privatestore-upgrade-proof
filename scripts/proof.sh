@@ -389,10 +389,89 @@ for f in "$CODEX_RUNTIME_DIR/config.json" "$CODEX_RUNTIME_DIR/bundle.marker" "$C
   fi
 done
 
+
+# ── Step 10: capture-only layout — no SQLite store, only the capture root ─────
+say "step 10: candidate repairs a capture-only state directory (no SQLite store)"
+CAPTURE_ONLY_DIR="$RUNNER_TEMP/proof-capture-only"
+CAPTURE_ONLY_ROOT="$CAPTURE_ONLY_DIR.update-captures"
+rm -rf "$CAPTURE_ONLY_DIR" "$CAPTURE_ONLY_ROOT"
+mkdir -p "$CAPTURE_ONLY_DIR" "$CAPTURE_ONLY_ROOT"
+echo "capture-only-proof-20261111" >"$CAPTURE_ONLY_ROOT/capture.marker"
+chmod 700 "$CAPTURE_ONLY_DIR" "$CAPTURE_ONLY_ROOT"
+chmod 600 "$CAPTURE_ONLY_ROOT/capture.marker"
+# Widen exactly like an fsGroup remount. No client/credentials.sqlite and no
+# control/services.sqlite exist here, which is the reviewed defect's condition.
+chmod 2770 "$CAPTURE_ONLY_DIR" "$CAPTURE_ONLY_ROOT"
+chmod 660 "$CAPTURE_ONLY_ROOT/capture.marker"
+note "before: $(stat -c '%a' "$CAPTURE_ONLY_ROOT") $CAPTURE_ONLY_ROOT"
+CAPTURE_ONLY_RC=0
+OPENCLAW_STATE_DIR="$CAPTURE_ONLY_DIR" "$POST_BIN" doctor --non-interactive --repair \
+  >/tmp/doctor-capture-only.log 2>/tmp/doctor-capture-only-err.log || CAPTURE_ONLY_RC=$?
+note "capture-only doctor exit=$CAPTURE_ONLY_RC"
+CAPTURE_ONLY_MODE="$(stat -c '%a' "$CAPTURE_ONLY_ROOT")"
+CAPTURE_ONLY_OK=false
+if [ "$CAPTURE_ONLY_MODE" = "700" ]; then
+  CAPTURE_ONLY_OK=true
+fi
+note "  [capture-only] capture root → $CAPTURE_ONLY_MODE (want 700), repaired=$CAPTURE_ONLY_OK"
+note "  [capture-only] captured bytes retained=$([ "$(cat "$CAPTURE_ONLY_ROOT/capture.marker" 2>/dev/null)" = "capture-only-proof-20261111" ] && echo YES || echo NO)"
+{ echo "=== CAPTURE-ONLY DOCTOR ==="; cat /tmp/doctor-capture-only.log; cat /tmp/doctor-capture-only-err.log; } | tee -a "$SUMMARY"
+
+# ── Step 11: minted-store-only layout — no SQLite store ──────────────────────
+say "step 11: candidate repairs minted stores without an installation database"
+MINTED_ONLY_DIR="$RUNNER_TEMP/proof-minted-only"
+MINTED_ONLY_PROFILE="$MINTED_ONLY_DIR/credentials/github/system/$PROFILE_ID_SYSTEM"
+MINTED_ONLY_CODEX="$MINTED_ONLY_DIR/codex-runtime"
+rm -rf "$MINTED_ONLY_DIR"
+mkdir -p "$MINTED_ONLY_PROFILE" "$MINTED_ONLY_CODEX"
+echo "minted-only-proof-20261111" >"$MINTED_ONLY_PROFILE/hosts.yml"
+echo "minted-only-proof-20261111" >"$MINTED_ONLY_CODEX/config.json"
+find "$MINTED_ONLY_DIR" -type d -exec chmod 700 {} \;
+find "$MINTED_ONLY_DIR" -type f -exec chmod 600 {} \;
+find "$MINTED_ONLY_DIR" -type d -exec chmod 2770 {} \;
+find "$MINTED_ONLY_DIR" -type f -exec chmod 660 {} \;
+if [ -e "$MINTED_ONLY_DIR/client/credentials.sqlite" ] || [ -e "$MINTED_ONLY_DIR/control/services.sqlite" ]; then
+  note "  [minted-only] fixture unexpectedly has a SQLite store"
+fi
+note "before: profile=$(stat -c '%a' "$MINTED_ONLY_PROFILE") codex=$(stat -c '%a' "$MINTED_ONLY_CODEX")"
+MINTED_ONLY_RC=0
+OPENCLAW_STATE_DIR="$MINTED_ONLY_DIR" "$POST_BIN" doctor --non-interactive --repair \
+  >/tmp/doctor-minted-only.log 2>/tmp/doctor-minted-only-err.log || MINTED_ONLY_RC=$?
+note "minted-only doctor exit=$MINTED_ONLY_RC"
+MINTED_ONLY_OK=true
+for target in "$MINTED_ONLY_PROFILE" "$MINTED_ONLY_CODEX"; do
+  target_mode="$(stat -c '%a' "$target")"
+  if [ "$target_mode" != "700" ]; then
+    MINTED_ONLY_OK=false
+  fi
+  note "  [minted-only] $(basename "$target") dir → $target_mode (want 700)"
+  for f in "$target"/*; do
+    [ -f "$f" ] || continue
+    fmode="$(stat -c '%a' "$f")"
+    if [ "$fmode" != "600" ]; then
+      MINTED_ONLY_OK=false
+    fi
+    note "  [minted-only] $(basename "$f") → $fmode (want 600)"
+  done
+done
+note "  [minted-only] repaired=$MINTED_ONLY_OK"
+{ echo "=== MINTED-ONLY DOCTOR ==="; cat /tmp/doctor-minted-only.log; cat /tmp/doctor-minted-only-err.log; } | tee -a "$SUMMARY"
+
 # ── Final Verdict ─────────────────────────────────────────────────────────────
 say "FINAL VERDICT"
 
-if $DRIVER_CONTROLS_PASS && $DRIVER_MINTED_STILL_BROKEN && $ALL_REPAIRED && $DATA_OK && [ "$UPDATE_RC" -eq 0 ]; then
+
+# Compact evidence block for the pull request body.
+{
+  echo "proof run: upgrade-proof / head $(git -C "$GITHUB_WORKSPACE/openclaw" rev-parse HEAD 2>/dev/null || echo unknown)"
+  echo "driver: $STABLE_VERSION  candidate: $CANDIDATE_VERSION"
+  echo "driver doctor: controls_repaired=$DRIVER_CONTROLS_PASS minted_still_widened=$DRIVER_MINTED_STILL_BROKEN"
+  echo "candidate doctor: all_stores_repaired=$ALL_REPAIRED data_retained=$DATA_OK capture_only=$CAPTURE_ONLY_OK minted_only=$MINTED_ONLY_OK upgrade_rc=$UPDATE_RC"
+  echo "capture-only layout: no client/credentials.sqlite, no control/services.sqlite; capture root $(stat -c '%a' "$CAPTURE_ONLY_ROOT")"
+  echo "minted-only layout: no SQLite store; profile $(stat -c '%a' "$MINTED_ONLY_PROFILE"), codex-runtime $(stat -c '%a' "$MINTED_ONLY_CODEX")"
+} >/tmp/proof-summary-compact.txt
+
+if $DRIVER_CONTROLS_PASS && $DRIVER_MINTED_STILL_BROKEN && $ALL_REPAIRED && $DATA_OK && $CAPTURE_ONLY_OK && $MINTED_ONLY_OK && [ "$UPDATE_RC" -eq 0 ]; then
   VERDICT="PASS"
 else
   VERDICT="FAIL"
@@ -408,6 +487,8 @@ note "  [driver] controls_repaired       = $($DRIVER_CONTROLS_PASS && echo YES |
 note "  [driver] minted_still_broken      = $($DRIVER_MINTED_STILL_BROKEN && echo YES || echo NO)"
 note "  [candidate] all_stores_repaired   = $($ALL_REPAIRED && echo YES || echo NO)"
 note "  [candidate] data_retention        = $($DATA_OK && echo YES || echo NO)"
+note "  [candidate] capture_only_repaired = $($CAPTURE_ONLY_OK && echo YES || echo NO)"
+note "  [candidate] minted_only_repaired  = $($MINTED_ONLY_OK && echo YES || echo NO)"
 note "  [upgrade]  exit_code              = $UPDATE_RC"
 note ""
 note "This proves: openclaw@$STABLE repairs control stores after fsGroup remount"
